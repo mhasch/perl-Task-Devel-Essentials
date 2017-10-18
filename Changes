@@ -1,5 +1,10 @@
 Revision history for Task-Devel-Essentials
 
+0.004   Wed, 18 Oct 2017 17:42:37 +0200
+        upgraded versions
+        added more modules
+        dropped DBI
+
 0.003   Fri, 30 May 2014 14:31:52 +0200
         added more modules
         added version numbers

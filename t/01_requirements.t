@@ -1,4 +1,4 @@
-# Copyright (c) 2104 Martin Becker.  All rights reserved.
+# Copyright (c) 2014 Martin Becker.  All rights reserved.
 # This script is free software; you can redistribute it and/or modify it
 # under the same terms as Perl itself.
 #
@@ -8,6 +8,8 @@
 use strict;
 use warnings;
 use Test::More 0.82;
+
+$ENV{'NYTPROF'} = 'start=no';
 
 my $MAKEFILE_PL = 'Makefile.PL';
 
