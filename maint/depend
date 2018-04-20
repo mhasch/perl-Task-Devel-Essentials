@@ -1,0 +1,227 @@
+#!/usr/bin/env perl
+# fetch module dependencies from metacpan, list modules topologically sorted
+
+use strict;
+use warnings;
+use version;
+use MetaCPAN::Client;
+use HTTP::Tiny;
+use JSON;
+use YAML ();
+use Data::Dumper;
+
+die "usage: depend [Makefile.PL]\n" if 1 < @ARGV;
+
+my $MAKEFILE_PL   = @ARGV? $ARGV[0]: 'Makefile.PL';
+my $BASE_URL      = 'https://st.aticpan.org/source';
+my $NULL_VERSION  = version->parse('0');
+my $SHOW_PROGRESS = 1;
+my $LISTED_ONLY   = 1;
+my $DUMP_DEPEND   = 0;
+
+my $http    = HTTP::Tiny->new;
+my $mcpan   = MetaCPAN::Client->new;
+
+my %pseudo = map {($_, undef)} qw(
+    Config
+    Errno
+    perl
+);
+my %stupid = (
+    'Test::CPAN::Meta::JSON' => [qw(Test::CPAN::Meta)],
+    'Test::CPAN::Meta'       => [qw(Test::CPAN::Meta::JSON)],
+);
+my %done = ();
+my %todo = ();
+
+$| = 1;
+
+open my $mf, '<', $MAKEFILE_PL  or die "$MAKEFILE_PL: cannot open: $!\n";
+while (<$mf>) {
+    if (/^(?:requires|recommends)\s+'([\w\:]+)'\s*=>\s*'([\d._]+)'\s*;/) {
+        add_todo($1, $2, 1);
+    }
+}
+close $mf;
+
+while (keys %todo) {
+    my ($n_mod, $n_vers, $n_isl) = ();
+    while (my ($k, $v) = each %todo) {
+        if (
+            !defined($n_mod) ||
+            !$n_isl && $v->[1] ||
+            (!$n_isl) == (!$v->[1]) && $k lt $n_mod
+        ) {
+            ($n_mod, $n_vers, $n_isl) = ($k, @{$v});
+        }
+    }
+    process($n_mod, $n_vers, $n_isl);
+    delete $todo{$n_mod};
+    print 0+keys(%todo), ' todo ', 0+keys(%done), " done\n" if $SHOW_PROGRESS;
+}
+
+if ($DUMP_DEPEND) {
+    print Data::Dumper->Dump([\%done], [qw(depend)]);
+}
+
+# core modules frequently in circular dependencies
+my @cheat  = qw(
+    CPAN::Meta
+    Carp
+    Data::Dumper
+    Exporter
+    ExtUtils::MakeMaker
+    File::Path
+    File::Temp
+    Filter::Util::Call
+    Getopt::Long
+    IPC::Cmd
+    Pod::Usage
+    Test::More
+    Text::Abbrev
+    Time::Local
+    Unicode::Normalize
+);
+my @sorted =
+    map { [$_, @{ delete $done{$_} }] }
+    grep { exists $done{$_} }
+    @cheat;
+
+DONE:
+while (keys %done) {
+    foreach my $module (sort keys %done) {
+        if (!grep {exists $done{$_}} keys %{$done{$module}->[3]}) {
+            push @sorted, [$module, @{ delete $done{$module} }];
+            next DONE;
+        }
+    }
+    foreach my $module (sort keys %done) {
+        my @bad = grep {exists $done{$_}} keys %{$done{$module}->[3]};
+        warn "breaking loop with module $module (@bad)\n";
+        push @sorted, [$module, @{ delete $done{$module} }, \@bad];
+        next DONE;
+    }
+}
+
+foreach my $mr (grep {!$LISTED_ONLY || $_->[2]} @sorted) {
+    my ($module, $wanted, $listed, $pkg, $deps) = @{$mr};
+    my $cpanvers = @{$pkg}? $pkg->[0]: '0';
+    print "$module\t$wanted\t$cpanvers\n";
+}
+
+sub add_todo {
+    my ($module, $wanted_version, $is_listed) = @_;
+    my $wanted = eval { version->parse($wanted_version) };
+    if (!defined $wanted) {
+        warn "$module: version '$wanted_version' simplified to '0'\n";
+        $wanted_version = '0';
+        $wanted = $NULL_VERSION;
+    }
+    if (exists $done{$module}) {
+        my $o_wv = $done{$module}->[0];
+        $done{$module}->[0] = $wanted_version
+            if version->parse($o_wv) < $wanted;
+        $done{$module}->[1] ||= $is_listed;
+    }
+    elsif (exists $todo{$module}) {
+        my $o_wv = $todo{$module}->[0];
+        $todo{$module}->[0] = $wanted_version
+            if version->parse($o_wv) < $wanted;
+        $todo{$module}->[1] ||= $is_listed;
+    }
+    else {
+        $todo{$module} = [$wanted_version, $is_listed];
+    }
+}
+
+sub process {
+    my ($module, $wanted_version, $is_listed) = @_;
+    my $pkg = eval { $mcpan->package($module) };
+    if (!defined $pkg) {
+        warn "$module: no CPAN distro found\n" if !exists $pseudo{$module};
+        $done{$module} = [$wanted_version, $is_listed, [], {}];
+        return;
+    }
+    my $version  = $pkg->version;
+    my $distro   = $pkg->distribution;
+    my $dvers    = $pkg->dist_version;
+    my $author   = $pkg->author;
+    my $file     = $pkg->file;
+    my $metajson = "$author/$distro-$dvers/META.json";
+    my $metayml  = "$author/$distro-$dvers/META.yml";
+    my %deps     = ();
+    my %unwanted = ();
+    if (exists $stupid{$module}) {
+        @unwanted{@{$stupid{$module}}} = ();
+    }
+
+    $done{$module} = [
+        $wanted_version, $is_listed,
+        [$version, $distro, $dvers, $author],
+        \%deps,
+    ];
+
+    my $meta = $http->get("$BASE_URL/$metajson");
+    if ($meta->{'success'}) {
+        my $info = eval { decode_json($meta->{'content'}) };
+        if (!defined $info) {
+            warn "$module: $metajson: content not parseable\n";
+            return;
+        }
+        my $prereqs = $info->{'prereqs'} || {};
+        %deps =
+            map { @{$_} }
+            sort {
+                $a->[0] cmp $b->[0] ||
+                version->parse($a->[1]) <=> version->parse($b->[1])
+            }
+            map {
+                my $stp = $_;
+                map {
+                    my $d = $stp->{$_};
+                    map { [$_, $d->{$_}] }
+                    grep {!exists $unwanted{$_}}
+                    keys %{$d}
+                }
+                grep { exists $stp->{$_} }
+                qw(requires recommends)
+            }
+            @{$prereqs}{
+                grep { exists $prereqs->{$_} }
+                qw(configure build test runtime)
+            };
+    }
+    else {
+        $meta = $http->get("$BASE_URL/$metayml");
+        if (!$meta->{'success'}) {
+            warn "$module: neither JSON nor YAML meta file found\n";
+            return;
+        }
+        my $info = eval { YAML::Load($meta->{'content'}) };
+        if (!defined $info) {
+            warn "$module: $metayml: content not parseable\n";
+            return;
+        }
+        %deps =
+            map { @{$_} }
+            sort {
+                $a->[0] cmp $b->[0] ||
+                version->parse($a->[1]) <=> version->parse($b->[1])
+            }
+            map {
+                my $d = $info->{$_};
+                map { [$_, $d->{$_}] }
+                grep {!exists $unwanted{$_}}
+                keys %{$d}
+            }
+            grep { exists $info->{$_} }
+            qw(requires build_requires recommends);
+    }
+
+    foreach my $mod (keys %deps) {
+        add_todo($mod, $deps{$mod}, 0);
+    }
+    return;
+}
+
+__END__
