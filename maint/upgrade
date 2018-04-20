@@ -38,13 +38,16 @@ sub _get_version {
         return $old_version;
     }
     my $cmp = version->parse($old_version) <=> version->parse($version);
-    if ($cmp > 1) {
+    if ($cmp > 0) {
         warn "$module: too old, keeping version $old_version\n";
         return $old_version;
     }
     if ($cmp) {
         warn "$module: upgrading to version $version from $old_version\n";
         ++$changes;
+    }
+    if ('v' eq substr $version, 0, 1) {
+        return version->parse($version)->numify;
     }
     return $version;
 }
