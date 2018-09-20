@@ -101,5 +101,3 @@ requires        'Dist::Zilla'                          => '6.012';
 no_index        'directory'                            => 'maint';
 
 WriteAll;
-
--d 'inc/.admin' and inc::Module::Install::Metadata->write;
