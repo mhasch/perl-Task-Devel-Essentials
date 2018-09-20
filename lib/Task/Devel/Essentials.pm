@@ -10,11 +10,11 @@ Task::Devel::Essentials - Bundle of modules useful for developers
 
 =head1 VERSION
 
-Version 0.011
+Version 0.012
 
 =cut
 
-our $VERSION = '0.011';
+our $VERSION = '0.012';
 
 =head1 SYNOPSIS
 
@@ -195,7 +195,7 @@ our $VERSION = '0.011';
 
 =head1 AUTHOR
 
-Martin Becker, C<< <mhasch at cpan.org> >>
+Martin Becker C<< <mhasch at cpan.org> >>
 
 =head1 LICENSE AND COPYRIGHT
 

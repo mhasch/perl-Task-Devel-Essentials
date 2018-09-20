@@ -1,5 +1,8 @@
 Revision history for Task-Devel-Essentials
 
+0.012   
+        migrated from Module::Install to ExtUtils::MakeMaker
+
 0.011   Thu, 20 Sep 2018 08:37:45 +0200
         upgraded more versions
         fixed unsafe @INC usage
