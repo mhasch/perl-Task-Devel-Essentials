@@ -1,4 +1,4 @@
-# Copyright (c) 2017 Martin Becker.  All rights reserved.
+# Copyright (c) 2017-2019 Martin Becker.  All rights reserved.
 # This script is free software; you can redistribute it and/or modify it
 # under the same terms as Perl itself.
 #
